@@ -1,7 +1,7 @@
 //
 //  TOWebViewController.m
 //
-//  Copyright 2013-2015 Timothy Oliver. All rights reserved.
+//  Copyright 2014 Timothy Oliver. All rights reserved.
 //
 //  Features logic designed by Satoshi Asano (ninjinkun) for NJKWebViewProgress,
 //  also licensed under the MIT License. Re-implemented by Timothy Oliver.
@@ -28,7 +28,7 @@
 #import "TOActivitySafari.h"
 #import "TOActivityChrome.h"
 #import "UIImage+TOWebViewControllerIcons.h"
-
+#import "SDProgressView.h"
 #import <QuartzCore/QuartzCore.h>
 #import <MessageUI/MessageUI.h>
 #import <MessageUI/MFMailComposeViewController.h>
@@ -38,7 +38,7 @@
 /* Detect if we're running iOS 7.0 or higher (With the new minimal UI) */
 #define MINIMAL_UI      ([[UIViewController class] instancesRespondToSelector:@selector(edgesForExtendedLayout)])
 /* Detect if we're running iOS 8.0 (With the new device rotation system) */
-#define NEW_ROTATIONS   ([[UIViewController class] instancesRespondToSelector:NSSelectorFromString(@"viewWillTransitionToSize:withTransitionCoordinator:")])
+#define NEW_ROTATIONS   ([[UIViewController class] instancesRespondToSelector:@selector(viewWillTransitionToSize:withTransitionCoordinator:)])
 
 /* The default blue tint color of iOS 7.0 */
 #define DEFAULT_BAR_TINT_COLOR [UIColor colorWithRed:0.0f green:110.0f/255.0f blue:1.0f alpha:1.0f]
@@ -153,6 +153,7 @@ static const float kAfterInteractiveMaxProgressValue    = 0.9f;
 /* See if we need to revert the navigation bar to 'hidden' when we pop from a navigation controller */
 @property (nonatomic,assign) BOOL hideNavBarOnClose;
 
+@property (nonatomic ,retain)SDRotationLoopProgressView * mbView;
 /* Perform all common setup steps */
 - (void)setup;
 
@@ -224,7 +225,7 @@ static const float kAfterInteractiveMaxProgressValue    = 0.9f;
 
 - (instancetype)initWithURL:(NSURL *)url
 {
-    if (self = [super init])
+    if (self = [self init])
         _url = [self cleanURL:url];
     
     return self;
@@ -249,7 +250,6 @@ static const float kAfterInteractiveMaxProgressValue    = 0.9f;
 {
     //Direct ivar reference since we don't want to trigger their actions yet
     _showActionButton = YES;
-    _showDoneButton   = YES;
     _buttonSpacing    = (IPAD == NO) ? NAVIGATION_BUTTON_SPACING : NAVIGATION_BUTTON_SPACING_IPAD;
     _buttonWidth      = NAVIGATION_BUTTON_WIDTH;
     _showLoadingBar   = YES;
@@ -258,9 +258,6 @@ static const float kAfterInteractiveMaxProgressValue    = 0.9f;
     
     //Set the initial default style as full screen (But this can be easily overridden)
     self.modalPresentationStyle = UIModalPresentationFullScreen;
-
-    //Set the URL request
-    self.urlRequest = [[NSMutableURLRequest alloc] init];
 }
 
 - (void)loadView
@@ -274,6 +271,8 @@ static const float kAfterInteractiveMaxProgressValue    = 0.9f;
     view.opaque = YES;
     view.clipsToBounds = YES;
     self.view = view;
+    
+    
     
     //create and add the detail gradient to the background view
     if (MINIMAL_UI == NO) {
@@ -293,6 +292,25 @@ static const float kAfterInteractiveMaxProgressValue    = 0.9f;
     self.webView.opaque = YES;
     [self.view addSubview:self.webView];
 
+//    self.mbView = [SDRotationLoopProgressView progressView];
+//    self.mbView.frame = CGRectMake(0, 0, 100, 100);
+//    self.mbView.center = self.webView.center;
+//    self.mbView.backgroundColor = [UIColor colorWithRed:251/255.0 green:247/255.0 blue:237/255.0 alpha:1];
+//    self.mbView.SDRotationLoopProgressViewWaitingText = @"正在加载";
+//    [self.webView addSubview:self.mbView];
+    
+    
+    self.activity = [[UIActivityIndicatorView alloc]initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhiteLarge];
+    self.blackview = [[UIView alloc]initWithFrame:[[UIScreen mainScreen] bounds]];
+    self.blackview.backgroundColor = [UIColor colorWithWhite:0.3 alpha:0.5];
+    self.activity.frame = CGRectMake(110 , 200 , 100, 100);
+    [self.view addSubview:self.blackview];
+    [self.view addSubview:self.activity];
+    [self.activity startAnimating];
+
+    
+    
+    
     //Set up the loading bar
     CGFloat y = self.webView.scrollView.contentInset.top;
     self.loadingBarView = [[TOWebLoadingView alloc] initWithFrame:CGRectMake(0, y, CGRectGetWidth(self.view.frame), LOADING_BAR_HEIGHT)];
@@ -452,7 +470,7 @@ static const float kAfterInteractiveMaxProgressValue    = 0.9f;
         self.buttonsContainerView.tintColor = self.buttonTintColor;
     
     // Create the Done button
-    if (self.showDoneButton && self.beingPresentedModally && !self.onTopOfNavigationControllerStack) {
+    if (self.beingPresentedModally && !self.onTopOfNavigationControllerStack) {
         NSString *title = NSLocalizedStringFromTable(@"Done", @"TOWebViewControllerLocalizable", @"Modal Web View Controller Close");
         UIBarButtonItem *doneButton = [[UIBarButtonItem alloc] initWithTitle:title style:UIBarButtonItemStyleDone target:self action:@selector(doneButtonTapped:)];
         if (IPAD)
@@ -476,11 +494,11 @@ static const float kAfterInteractiveMaxProgressValue    = 0.9f;
     if (self.navigationController) {
         if (IPAD == NO) { //iPhone
             if (self.beingPresentedModally == NO) { //being pushed onto a pre-existing stack, so
-                [self.navigationController setToolbarHidden:self.navigationButtonsHidden animated:animated];
+                [self.navigationController setToolbarHidden:NO animated:animated];
                 [self.navigationController setNavigationBarHidden:NO animated:animated];
             }
             else { //Being presented modally, so control the
-                self.navigationController.toolbarHidden = self.navigationButtonsHidden;
+                self.navigationController.toolbarHidden = NO;
             }
         }
         else {
@@ -494,10 +512,7 @@ static const float kAfterInteractiveMaxProgressValue    = 0.9f;
     
     //start loading the initial page
     if (self.url && self.webView.request == nil)
-    {
-        [self.urlRequest setURL:self.url];
-        [self.webView loadRequest:self.urlRequest];
-    }
+        [self.webView loadRequest:[NSURLRequest requestWithURL:self.url]];
 }
 
 - (void)viewWillDisappear:(BOOL)animated
@@ -522,11 +537,6 @@ static const float kAfterInteractiveMaxProgressValue    = 0.9f;
         return NO;
     
     return YES;
-}
-
-- (UIStatusBarStyle)preferredStatusBarStyle
-{
-    return UIStatusBarStyleDefault;
 }
 
 - (BOOL)shouldAutorotateToInterfaceOrientation:(UIInterfaceOrientation)toInterfaceOrientation
@@ -602,8 +612,7 @@ static const float kAfterInteractiveMaxProgressValue    = 0.9f;
     if (self.webView.loading)
         [self.webView stopLoading];
     
-    [self.urlRequest setURL:self.url];
-    [self.webView loadRequest:self.urlRequest];
+    [self.webView loadRequest:[NSURLRequest requestWithURL:self.url]];
 }
 
 - (void)setLoadingBarTintColor:(UIColor *)loadingBarTintColor
@@ -761,13 +770,23 @@ static const float kAfterInteractiveMaxProgressValue    = 0.9f;
     
     //update the navigation bar buttons
     [self refreshButtonsState];
+    
+
 }
 
 - (void)webViewDidFinishLoad:(UIWebView *)webView
 {
     [self handleLoadRequestCompletion];
     [self refreshButtonsState];
+    
+    NSString *jss = @"var cc = document.getElementsByClassName('m-app-download')[0];"
+    "cc.style.display = 'none';";
+    [webView stringByEvaluatingJavaScriptFromString:jss];
+    [self.activity stopAnimating];
+    [self.blackview setHidden:YES];
+    
 
+   
     //see if we can set the proper page title at this point
     if (self.showPageTitles)
         self.title = [self.webView stringByEvaluatingJavaScriptFromString:@"document.title"];
@@ -808,9 +827,11 @@ static const float kAfterInteractiveMaxProgressValue    = 0.9f;
         //it nullifies webView.request, which causes [webView reload] to stop working.
         //This checks to see if the webView request URL is nullified, and if so, tries to load
         //off our stored self.url property instead
+        NSURLRequest *request = self.webView.request;
         if (self.webView.request.URL.absoluteString.length == 0 && self.url)
         {
-            [self.webView loadRequest:self.urlRequest];
+            request = [NSURLRequest requestWithURL:self.url];
+            [self.webView loadRequest:request];
         }
         else {
             [self.webView reload];
@@ -1115,7 +1136,7 @@ static const float kAfterInteractiveMaxProgressValue    = 0.9f;
 - (void)setLoadingProgress:(CGFloat)loadingProgress
 {
     // progress should be incremental only
-    if (loadingProgress > _loadingProgressState.loadingProgress)
+    if (loadingProgress > _loadingProgressState.loadingProgress || loadingProgress == 0)
     {
         _loadingProgressState.loadingProgress = loadingProgress;
         
@@ -1136,16 +1157,6 @@ static const float kAfterInteractiveMaxProgressValue    = 0.9f;
                     }];
                 }
             }];
-        }
-    }
-    else if (loadingProgress == 0)
-    {
-        _loadingProgressState.loadingProgress = loadingProgress;
-        if (self.showLoadingBar)
-        {
-            CGRect frame = self.loadingBarView.frame;
-            frame.origin.x = -CGRectGetWidth(self.loadingBarView.frame);
-            self.loadingBarView.frame = frame;
         }
     }
 }
@@ -1692,8 +1703,7 @@ static const float kAfterInteractiveMaxProgressValue    = 0.9f;
         //if we were sufficiently scrolled from the top, make sure to line up to the middle, not the top
         if ((_webViewState.contentOffset.y + _webViewState.topEdgeInset) > FLT_EPSILON)
         {
-            
-            if(UIDeviceOrientationIsLandscape([UIDevice currentDevice].orientation)) {
+            if (UIInterfaceOrientationIsLandscape(self.interfaceOrientation)) {
                 translatedContentOffset.y += (CGRectGetHeight(self.webViewRotationSnapshot.frame)*0.5f) - (CGRectGetHeight(self.webView.frame)*0.5f);
             }
             else {
